@@ -908,35 +908,14 @@ async function runServer() {
       });
     });
     
-    // Create SSE transport
-    const sseTransport = new SSEServerTransport("/message", server);
+    // Create SSE transport - just pass the path
+    const sseTransport = new SSEServerTransport("/message");
+    
+    // Connect server to transport
     await server.connect(sseTransport);
     
-    // SSE endpoints - manually handle the transport
-    app.get('/message', (req, res) => {
-      // Set SSE headers
-      res.writeHead(200, {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Headers': 'Cache-Control'
-      });
-      
-      // Let the transport handle the connection
-      sseTransport.handleConnection(req, res);
-    });
-    
-    app.post('/message', express.json(), async (req, res) => {
-      try {
-        // Handle MCP requests
-        const response = await server.handleRequest(req.body);
-        res.json(response);
-      } catch (error) {
-        console.error('MCP request error:', error);
-        res.status(500).json({ error: 'Internal server error' });
-      }
-    });
+    // Add transport routes to express app
+    app.use(sseTransport.router);
     
     // Start HTTP server
     const httpServer = app.listen(port, host, () => {
