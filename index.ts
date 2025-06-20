@@ -1070,11 +1070,17 @@ async function runServer() {
         }
         
         // Build proper JSON-RPC response
-        const fullResponse = {
+        const fullResponse: any = {
           jsonrpc: "2.0",
           id: request.id,
-          ...(response.error ? { error: response.error } : { result: response })
         };
+        
+        // Check if response has error property
+        if ('error' in response && response.error) {
+          fullResponse.error = response.error;
+        } else {
+          fullResponse.result = response;
+        }
         
         console.error('MCP Response:', JSON.stringify(fullResponse, null, 2));
         res.json(fullResponse);
