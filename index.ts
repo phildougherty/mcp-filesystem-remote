@@ -886,7 +886,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 // Start server
 async function runServer() {
   if (transportMode === 'sse') {
-    // Setup HTTP server with SSE transport
+    // Setup HTTP server with manual SSE implementation
     const app = express();
     
     // Enable CORS for all routes
@@ -908,14 +908,79 @@ async function runServer() {
       });
     });
     
-    // Create SSE transport - just pass the path
-    const sseTransport = new SSEServerTransport("/message");
+    // SSE endpoint for establishing connection
+    app.get('/message', (req, res) => {
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Headers': 'Content-Type, Cache-Control'
+      });
+      
+      // Send initial connection message
+      res.write('data: {"jsonrpc":"2.0","method":"notifications/ready"}\n\n');
+      
+      // Keep connection alive with heartbeat
+      const heartbeat = setInterval(() => {
+        res.write(':\n\n'); // SSE comment for keepalive
+      }, 30000);
+      
+      req.on('close', () => {
+        clearInterval(heartbeat);
+        console.log('SSE connection closed');
+      });
+      
+      req.on('error', () => {
+        clearInterval(heartbeat);
+      });
+    });
     
-    // Connect server to transport
-    await server.connect(sseTransport);
-    
-    // Add transport routes to express app
-    app.use(sseTransport.router);
+    // Handle MCP requests via POST
+    app.post('/message', async (req, res) => {
+      try {
+        const request = req.body;
+        
+        // Process the request through our existing handlers
+        let response;
+        
+        if (request.method === 'tools/list') {
+          const listTools = server.getRequestHandler(ListToolsRequestSchema);
+          response = await listTools(request);
+        } else if (request.method === 'tools/call') {
+          const callTool = server.getRequestHandler(CallToolRequestSchema);
+          response = await callTool(request);
+        } else {
+          response = {
+            jsonrpc: "2.0",
+            id: request.id,
+            error: {
+              code: -32601,
+              message: "Method not found"
+            }
+          };
+        }
+        
+        // Add jsonrpc and id to response
+        const fullResponse = {
+          jsonrpc: "2.0",
+          id: request.id,
+          ...response
+        };
+        
+        res.json(fullResponse);
+      } catch (error) {
+        console.error('MCP request error:', error);
+        res.status(500).json({
+          jsonrpc: "2.0",
+          id: req.body?.id || null,
+          error: {
+            code: -32603,
+            message: "Internal error"
+          }
+        });
+      }
+    });
     
     // Start HTTP server
     const httpServer = app.listen(port, host, () => {
