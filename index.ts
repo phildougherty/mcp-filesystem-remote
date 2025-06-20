@@ -24,27 +24,27 @@ const args = process.argv.slice(2);
 let transportMode = 'stdio';
 let port = 3000;
 let host = 'localhost';
-let allowedDirectoryArgs = args;
+let allowedDirectoryArgs: string[] = [];
 
 // Parse command line arguments
 for (let i = 0; i < args.length; i++) {
   const arg = args[i];
   if (arg === '--transport' && i + 1 < args.length) {
     transportMode = args[i + 1];
-    allowedDirectoryArgs = args.slice(0, i).concat(args.slice(i + 2));
-    break;
+    i++; // Skip the value
   } else if (arg === '--port' && i + 1 < args.length) {
     port = parseInt(args[i + 1], 10);
     if (isNaN(port)) {
       console.error("Invalid port number");
       process.exit(1);
     }
-    allowedDirectoryArgs = args.slice(0, i).concat(args.slice(i + 2));
     i++; // Skip the port value
   } else if (arg === '--host' && i + 1 < args.length) {
     host = args[i + 1];
-    allowedDirectoryArgs = args.slice(0, i).concat(args.slice(i + 2));
     i++; // Skip the host value
+  } else if (!arg.startsWith('--')) {
+    // This is a directory argument (doesn't start with --)
+    allowedDirectoryArgs.push(arg);
   }
 }
 
