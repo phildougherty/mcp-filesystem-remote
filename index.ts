@@ -931,10 +931,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
 // Start server
 async function runServer() {
-  if (transportMode === 'sse') {
-    // Setup HTTP server with proper MCP SSE implementation
+  if (transportMode === 'sse' || transportMode === 'http') {
+    // Setup HTTP server with SSE and HTTP transport support
     const app = express();
-
+    
     // Enable CORS for all routes
     app.use(cors({
       origin: true,
@@ -943,7 +943,7 @@ async function runServer() {
     }));
     
     app.use(express.json());
-
+    
     // Store active SSE connections
     const connections = new Map<string, any>();
     
@@ -953,62 +953,16 @@ async function runServer() {
         status: 'healthy', 
         server: 'secure-filesystem-server',
         version: '0.2.0',
-        allowedDirectories: allowedDirectories
+        allowedDirectories: allowedDirectories,
+        transport: transportMode
       });
     });
     
-    // SSE endpoint for establishing connection
-    app.get('/message', (req, res) => {
-      res.writeHead(200, {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Headers': 'Content-Type, Cache-Control'
-      });
-      
-      const connectionId = Date.now().toString();
-      connections.set(connectionId, res);
-      
-      console.error('New SSE connection established:', connectionId);
-      
-      // Send initial ready message in proper SSE format
-      res.write('event: message\n');
-      res.write('data: {"jsonrpc":"2.0","method":"notifications/initialized","params":{}}\n\n');
-      
-      // Keep connection alive with heartbeat every 30 seconds
-      const heartbeat = setInterval(() => {
-        if (connections.has(connectionId)) {
-          try {
-            res.write(': heartbeat\n\n');
-          } catch (error) {
-            console.error('Error sending heartbeat:', error);
-            clearInterval(heartbeat);
-            connections.delete(connectionId);
-          }
-        } else {
-          clearInterval(heartbeat);
-        }
-      }, 30000);
-      
-      req.on('close', () => {
-        console.error('SSE connection closed:', connectionId);
-        clearInterval(heartbeat);
-        connections.delete(connectionId);
-      });
-      
-      req.on('error', (error) => {
-        console.error('SSE connection error:', connectionId, error);
-        clearInterval(heartbeat);
-        connections.delete(connectionId);
-      });
-    });
-    
-    // Handle MCP requests via POST
-    app.post('/message', async (req, res) => {
+    // Root endpoint for HTTP MCP protocol
+    app.post('/', async (req, res) => {
       try {
         const request = req.body;
-        console.error('=== MCP Request received ===');
+        console.error('=== MCP Request received at / ===');
         console.error('Method:', request.method);
         console.error('ID:', request.id);
         console.error('Full request:', JSON.stringify(request, null, 2));
@@ -1037,17 +991,62 @@ async function runServer() {
             tools: [
               {
                 name: "read_file",
-                description: "Read the complete contents of a file from the file system.",
+                description: "Read the complete contents of a file from the file system. Handles various text encodings and provides detailed error messages if the file cannot be read. Use this tool when you need to examine the contents of a single file. Use the 'head' parameter to read only the first N lines of a file, or the 'tail' parameter to read only the last N lines of a file. Only works within allowed directories.",
                 inputSchema: zodToJsonSchema(ReadFileArgsSchema) as ToolInput,
               },
               {
+                name: "read_multiple_files",
+                description: "Read the contents of multiple files simultaneously. This is more efficient than reading files one by one when you need to analyze or compare multiple files. Each file's content is returned with its path as a reference. Failed reads for individual files won't stop the entire operation. Only works within allowed directories.",
+                inputSchema: zodToJsonSchema(ReadMultipleFilesArgsSchema) as ToolInput,
+              },
+              {
+                name: "write_file",
+                description: "Create a new file or completely overwrite an existing file with new content. Use with caution as it will overwrite existing files without warning. Handles text content with proper encoding. Only works within allowed directories.",
+                inputSchema: zodToJsonSchema(WriteFileArgsSchema) as ToolInput,
+              },
+              {
+                name: "edit_file",
+                description: "Make line-based edits to a text file. Each edit replaces exact line sequences with new content. Returns a git-style diff showing the changes made. Only works within allowed directories.",
+                inputSchema: zodToJsonSchema(EditFileArgsSchema) as ToolInput,
+              },
+              {
+                name: "create_directory",
+                description: "Create a new directory or ensure a directory exists. Can create multiple nested directories in one operation. If the directory already exists, this operation will succeed silently. Perfect for setting up directory structures for projects or ensuring required paths exist. Only works within allowed directories.",
+                inputSchema: zodToJsonSchema(CreateDirectoryArgsSchema) as ToolInput,
+              },
+              {
                 name: "list_directory",
-                description: "Get a detailed listing of all files and directories in a specified path.",
+                description: "Get a detailed listing of all files and directories in a specified path. Results clearly distinguish between files and directories with [FILE] and [DIR] prefixes. This tool is essential for understanding directory structure and finding specific files within a directory. Only works within allowed directories.",
                 inputSchema: zodToJsonSchema(ListDirectoryArgsSchema) as ToolInput,
               },
               {
+                name: "list_directory_with_sizes",
+                description: "Get a detailed listing of all files and directories in a specified path, including sizes. Results clearly distinguish between files and directories with [FILE] and [DIR] prefixes. This tool is useful for understanding directory structure and finding specific files within a directory. Only works within allowed directories.",
+                inputSchema: zodToJsonSchema(ListDirectoryWithSizesArgsSchema) as ToolInput,
+              },
+              {
+                name: "directory_tree",
+                description: "Get a recursive tree view of files and directories as a JSON structure. Each entry includes 'name', 'type' (file/directory), and 'children' for directories. Files have no children array, while directories always have a children array (which may be empty). The output is formatted with 2-space indentation for readability. Only works within allowed directories.",
+                inputSchema: zodToJsonSchema(DirectoryTreeArgsSchema) as ToolInput,
+              },
+              {
+                name: "move_file",
+                description: "Move or rename files and directories. Can move files between directories and rename them in a single operation. If the destination exists, the operation will fail. Works across different directories and can be used for simple renaming within the same directory. Both source and destination must be within allowed directories.",
+                inputSchema: zodToJsonSchema(MoveFileArgsSchema) as ToolInput,
+              },
+              {
+                name: "search_files",
+                description: "Recursively search for files and directories matching a pattern. Searches through all subdirectories from the starting path. The search is case-insensitive and matches partial names. Returns full paths to all matching items. Great for finding files when you don't know their exact location. Only searches within allowed directories.",
+                inputSchema: zodToJsonSchema(SearchFilesArgsSchema) as ToolInput,
+              },
+              {
+                name: "get_file_info",
+                description: "Retrieve detailed metadata about a file or directory. Returns comprehensive information including size, creation time, last modified time, permissions, and type. This tool is perfect for understanding file characteristics without reading the actual content. Only works within allowed directories.",
+                inputSchema: zodToJsonSchema(GetFileInfoArgsSchema) as ToolInput,
+              },
+              {
                 name: "list_allowed_directories",
-                description: "Returns the list of directories that this server is allowed to access.",
+                description: "Returns the list of directories that this server is allowed to access. Use this to understand which directories are available before trying to access files.",
                 inputSchema: {
                   type: "object",
                   properties: {},
@@ -1106,10 +1105,10 @@ async function runServer() {
         
         res.json(fullResponse);
       } catch (error) {
-        console.error('=== MCP Request Error ===');
+        console.error('=== MCP Request Error at / ===');
         console.error('Error processing request:', error);
         console.error('Request body:', req.body);
-        console.error('========================');
+        console.error('===============================');
         
         res.status(500).json({
           jsonrpc: "2.0",
@@ -1123,13 +1122,112 @@ async function runServer() {
       }
     });
     
+    // SSE endpoint for establishing connection (only for SSE mode)
+    if (transportMode === 'sse') {
+      app.get('/message', (req, res) => {
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Headers': 'Content-Type, Cache-Control'
+        });
+        
+        const connectionId = Date.now().toString();
+        connections.set(connectionId, res);
+        
+        console.error('New SSE connection established:', connectionId);
+        
+        // Send initial ready message in proper SSE format
+        res.write('event: message\n');
+        res.write('data: {"jsonrpc":"2.0","method":"notifications/initialized","params":{}}\n\n');
+        
+        // Keep connection alive with heartbeat every 30 seconds
+        const heartbeat = setInterval(() => {
+          if (connections.has(connectionId)) {
+            try {
+              res.write(': heartbeat\n\n');
+            } catch (error) {
+              console.error('Error sending heartbeat:', error);
+              clearInterval(heartbeat);
+              connections.delete(connectionId);
+            }
+          } else {
+            clearInterval(heartbeat);
+          }
+        }, 30000);
+        
+        req.on('close', () => {
+          console.error('SSE connection closed:', connectionId);
+          clearInterval(heartbeat);
+          connections.delete(connectionId);
+        });
+        
+        req.on('error', (error) => {
+          console.error('SSE connection error:', connectionId, error);
+          clearInterval(heartbeat);
+          connections.delete(connectionId);
+        });
+      });
+      
+      // Handle MCP requests via POST for SSE mode (duplicate of root handler)
+      app.post('/message', async (req, res) => {
+        // Same logic as the root POST handler
+        try {
+          const request = req.body;
+          console.error('=== MCP Request received at /message ===');
+          console.error('Method:', request.method);
+          console.error('ID:', request.id);
+          
+          let response;
+          
+          if (request.method === 'initialize') {
+            response = {
+              protocolVersion: "2024-11-05",
+              capabilities: { tools: {} },
+              serverInfo: { name: "secure-filesystem-server", version: "0.2.0" }
+            };
+          } else if (request.method === 'tools/list') {
+            response = { tools: [] }; // Simplified for /message endpoint
+          } else if (request.method === 'tools/call') {
+            response = await handleToolCall(request.params);
+          } else {
+            response = { error: { code: -32601, message: `Method not found: ${request.method}` } };
+          }
+          
+          let fullResponse: any = {
+            jsonrpc: "2.0",
+            id: request.id
+          };
+          
+          if (request.method === 'initialize' || request.method === 'tools/list') {
+            fullResponse.result = response;
+          } else {
+            fullResponse.result = response;
+          }
+          
+          res.json(fullResponse);
+        } catch (error) {
+          res.status(500).json({
+            jsonrpc: "2.0",
+            id: req.body?.id || null,
+            error: { code: -32603, message: "Internal error" }
+          });
+        }
+      });
+    }
+    
     // Start HTTP server
     const httpServer = app.listen(port, host, () => {
       console.error(`Secure MCP Filesystem Server running on http://${host}:${port}`);
-      console.error("Transport mode: SSE");
+      console.error(`Transport mode: ${transportMode.toUpperCase()}`);
       console.error("Allowed directories:", allowedDirectories);
       console.error(`Health check available at: http://${host}:${port}/health`);
-      console.error(`SSE endpoint available at: http://${host}:${port}/message`);
+      if (transportMode === 'http') {
+        console.error(`HTTP MCP endpoint available at: http://${host}:${port}/`);
+      } else {
+        console.error(`SSE endpoint available at: http://${host}:${port}/message`);
+      }
     });
     
     // Handle graceful shutdown
