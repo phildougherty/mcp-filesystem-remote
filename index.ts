@@ -1008,12 +1008,17 @@ async function runServer() {
     app.post('/message', async (req, res) => {
       try {
         const request = req.body;
-        console.error('MCP Request received:', JSON.stringify(request, null, 2));
+        console.error('=== MCP Request received ===');
+        console.error('Method:', request.method);
+        console.error('ID:', request.id);
+        console.error('Full request:', JSON.stringify(request, null, 2));
+        console.error('============================');
         
         let response;
         
         // Handle MCP initialize request
         if (request.method === 'initialize') {
+          console.error('Handling initialize request...');
           response = {
             protocolVersion: "2024-11-05",
             capabilities: {
@@ -1027,26 +1032,22 @@ async function runServer() {
         }
         // Handle tools/list request  
         else if (request.method === 'tools/list') {
+          console.error('Handling tools/list request...');
           response = {
             tools: [
               {
                 name: "read_file",
-                description: "Read the complete contents of a file from the file system. Handles various text encodings and provides detailed error messages if the file cannot be read. Use this tool when you need to examine the contents of a single file. Use the 'head' parameter to read only the first N lines of a file, or the 'tail' parameter to read only the last N lines of a file. Only works within allowed directories.",
+                description: "Read the complete contents of a file from the file system.",
                 inputSchema: zodToJsonSchema(ReadFileArgsSchema) as ToolInput,
               },
               {
-                name: "write_file",
-                description: "Create a new file or completely overwrite an existing file with new content. Use with caution as it will overwrite existing files without warning. Handles text content with proper encoding. Only works within allowed directories.",
-                inputSchema: zodToJsonSchema(WriteFileArgsSchema) as ToolInput,
-              },
-              {
                 name: "list_directory",
-                description: "Get a detailed listing of all files and directories in a specified path. Results clearly distinguish between files and directories with [FILE] and [DIR] prefixes. This tool is essential for understanding directory structure and finding specific files within a directory. Only works within allowed directories.",
+                description: "Get a detailed listing of all files and directories in a specified path.",
                 inputSchema: zodToJsonSchema(ListDirectoryArgsSchema) as ToolInput,
               },
               {
                 name: "list_allowed_directories",
-                description: "Returns the list of directories that this server is allowed to access. Use this to understand which directories are available before trying to access files.",
+                description: "Returns the list of directories that this server is allowed to access.",
                 inputSchema: {
                   type: "object",
                   properties: {},
@@ -1058,9 +1059,11 @@ async function runServer() {
         }
         // Handle tools/call request
         else if (request.method === 'tools/call') {
+          console.error('Handling tools/call request...');
           response = await handleToolCall(request.params);
         }
         else {
+          console.error('Unknown method:', request.method);
           response = {
             error: {
               code: -32601,
@@ -1069,23 +1072,51 @@ async function runServer() {
           };
         }
         
-        // Build proper JSON-RPC response
-        const fullResponse: any = {
-          jsonrpc: "2.0",
-          id: request.id,
-        };
+        // Build response based on method and response type
+        let fullResponse: any;
         
-        // Check if response has error property
-        if ('error' in response && response.error) {
-          fullResponse.error = response.error;
+        if (request.method === 'initialize' || request.method === 'tools/list') {
+          fullResponse = {
+            jsonrpc: "2.0",
+            id: request.id,
+            result: response
+          };
+        } else if (request.method === 'tools/call') {
+          if (response && typeof response === 'object' && 'isError' in response && response.isError) {
+            fullResponse = {
+              jsonrpc: "2.0",
+              id: request.id,
+              error: {
+                code: -32603,
+                message: response.content?.[0]?.text || "Tool execution failed"
+              }
+            };
+          } else {
+            fullResponse = {
+              jsonrpc: "2.0",
+              id: request.id,
+              result: response
+            };
+          }
         } else {
-          fullResponse.result = response;
+          fullResponse = {
+            jsonrpc: "2.0",
+            id: request.id,
+            error: response.error || response
+          };
         }
         
-        console.error('MCP Response:', JSON.stringify(fullResponse, null, 2));
+        console.error('=== MCP Response ===');
+        console.error('Sending response:', JSON.stringify(fullResponse, null, 2));
+        console.error('====================');
+        
         res.json(fullResponse);
       } catch (error) {
-        console.error('MCP request error:', error);
+        console.error('=== MCP Request Error ===');
+        console.error('Error processing request:', error);
+        console.error('Request body:', req.body);
+        console.error('========================');
+        
         res.status(500).json({
           jsonrpc: "2.0",
           id: req.body?.id || null,
