@@ -898,12 +898,6 @@ async function runServer() {
     
     app.use(express.json());
     
-    // Create SSE transport
-    const sseTransport = new SSEServerTransport("/message", server);
-    
-    // Add SSE endpoints to the express app
-    app.use(sseTransport.expressRouter);
-    
     // Health check endpoint
     app.get('/health', (req, res) => {
       res.json({ 
@@ -912,6 +906,29 @@ async function runServer() {
         version: '0.2.0',
         allowedDirectories: allowedDirectories
       });
+    });
+    
+    // Create SSE transport and connect
+    const sseTransport = new SSEServerTransport("/message");
+    await server.connect(sseTransport);
+    
+    // SSE endpoints - using proper Express integration
+    app.get('/message', async (req, res) => {
+      try {
+        await sseTransport.handleRequest(req, res);
+      } catch (error) {
+        console.error('SSE GET error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+      }
+    });
+    
+    app.post('/message', async (req, res) => {
+      try {
+        await sseTransport.handleRequest(req, res);
+      } catch (error) {
+        console.error('SSE POST error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+      }
     });
     
     // Start HTTP server
