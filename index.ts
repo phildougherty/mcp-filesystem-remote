@@ -17,36 +17,70 @@ import { minimatch } from 'minimatch';
 import express from 'express';
 import cors from 'cors';
 
-// Command line argument parsing
-const args = process.argv.slice(2);
+// Debug: Log all arguments
+console.error("DEBUG: process.argv:", process.argv);
 
-// Check for transport mode
+// Command line argument parsing with better logic
+const allArgs = process.argv.slice(2);
+console.error("DEBUG: allArgs:", allArgs);
+
 let transportMode = 'stdio';
 let port = 3000;
 let host = 'localhost';
-let allowedDirectoryArgs: string[] = [];
+const allowedDirectoryArgs: string[] = [];
 
-// Parse command line arguments
-for (let i = 0; i < args.length; i++) {
-  const arg = args[i];
-  if (arg === '--transport' && i + 1 < args.length) {
-    transportMode = args[i + 1];
-    i++; // Skip the value
-  } else if (arg === '--port' && i + 1 < args.length) {
-    port = parseInt(args[i + 1], 10);
-    if (isNaN(port)) {
-      console.error("Invalid port number");
+// Parse arguments more carefully
+let i = 0;
+while (i < allArgs.length) {
+  const arg = allArgs[i];
+  console.error(`DEBUG: Processing arg[${i}]: ${arg}`);
+  
+  if (arg === '--transport') {
+    if (i + 1 < allArgs.length) {
+      transportMode = allArgs[i + 1];
+      console.error(`DEBUG: Set transport to: ${transportMode}`);
+      i += 2; // Skip both --transport and its value
+    } else {
+      console.error("Error: --transport requires a value");
       process.exit(1);
     }
-    i++; // Skip the port value
-  } else if (arg === '--host' && i + 1 < args.length) {
-    host = args[i + 1];
-    i++; // Skip the host value
-  } else if (!arg.startsWith('--')) {
-    // This is a directory argument (doesn't start with --)
+  } else if (arg === '--port') {
+    if (i + 1 < allArgs.length) {
+      port = parseInt(allArgs[i + 1], 10);
+      if (isNaN(port)) {
+        console.error("Invalid port number");
+        process.exit(1);
+      }
+      console.error(`DEBUG: Set port to: ${port}`);
+      i += 2; // Skip both --port and its value
+    } else {
+      console.error("Error: --port requires a value");
+      process.exit(1);
+    }
+  } else if (arg === '--host') {
+    if (i + 1 < allArgs.length) {
+      host = allArgs[i + 1];
+      console.error(`DEBUG: Set host to: ${host}`);
+      i += 2; // Skip both --host and its value
+    } else {
+      console.error("Error: --host requires a value");
+      process.exit(1);
+    }
+  } else if (arg.startsWith('--')) {
+    console.error(`Error: Unknown flag: ${arg}`);
+    process.exit(1);
+  } else {
+    // This is a directory path
+    console.error(`DEBUG: Adding directory: ${arg}`);
     allowedDirectoryArgs.push(arg);
+    i += 1;
   }
 }
+
+console.error("DEBUG: Final allowedDirectoryArgs:", allowedDirectoryArgs);
+console.error("DEBUG: Transport mode:", transportMode);
+console.error("DEBUG: Port:", port);
+console.error("DEBUG: Host:", host);
 
 if (allowedDirectoryArgs.length === 0) {
   console.error("Usage: mcp-server-filesystem [--transport stdio|sse] [--port PORT] [--host HOST] <allowed-directory> [additional-directories...]");
