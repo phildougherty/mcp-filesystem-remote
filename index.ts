@@ -1073,37 +1073,31 @@ async function runServer() {
         }
         
         // Build response based on method and response type
-        let fullResponse: any;
+        let fullResponse: any = {
+          jsonrpc: "2.0",
+          id: request.id
+        };
         
         if (request.method === 'initialize' || request.method === 'tools/list') {
-          fullResponse = {
-            jsonrpc: "2.0",
-            id: request.id,
-            result: response
-          };
+          fullResponse.result = response;
         } else if (request.method === 'tools/call') {
-          if (response && typeof response === 'object' && 'isError' in response && response.isError) {
-            fullResponse = {
-              jsonrpc: "2.0",
-              id: request.id,
-              error: {
-                code: -32603,
-                message: response.content?.[0]?.text || "Tool execution failed"
-              }
+          const toolResponse = response as any;
+          if (toolResponse && toolResponse.isError) {
+            fullResponse.error = {
+              code: -32603,
+              message: toolResponse.content?.[0]?.text || "Tool execution failed"
             };
           } else {
-            fullResponse = {
-              jsonrpc: "2.0",
-              id: request.id,
-              result: response
-            };
+            fullResponse.result = response;
           }
         } else {
-          fullResponse = {
-            jsonrpc: "2.0",
-            id: request.id,
-            error: response.error || response
-          };
+          // For error responses
+          const errorResponse = response as any;
+          if (errorResponse && errorResponse.error) {
+            fullResponse.error = errorResponse.error;
+          } else {
+            fullResponse.error = response;
+          }
         }
         
         console.error('=== MCP Response ===');
