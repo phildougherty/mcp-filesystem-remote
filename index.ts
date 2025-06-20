@@ -20,9 +20,21 @@ import cors from 'cors';
 // Debug: Log all arguments
 console.error("DEBUG: process.argv:", process.argv);
 
-// Command line argument parsing with better logic
-const allArgs = process.argv.slice(2);
-console.error("DEBUG: allArgs:", allArgs);
+// Command line argument parsing with Docker fix
+let allArgs = process.argv.slice(2);
+console.error("DEBUG: Raw allArgs:", allArgs);
+
+// Docker sometimes passes unexpected arguments, filter them out
+allArgs = allArgs.filter(arg => 
+  arg !== 'node' && 
+  !arg.includes('/app/dist/index.js') &&
+  !arg.endsWith('index.js') &&
+  arg !== undefined &&
+  arg !== null &&
+  arg !== ''
+);
+
+console.error("DEBUG: Filtered allArgs:", allArgs);
 
 let transportMode = 'stdio';
 let port = 3000;
