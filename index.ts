@@ -1252,38 +1252,226 @@ async function runServer() {
 async function handleToolCall(params: any) {
   try {
     const { name, arguments: args } = params;
-    
     switch (name) {
       case "read_file": {
         const parsed = ReadFileArgsSchema.safeParse(args);
         if (!parsed.success) {
           throw new Error(`Invalid arguments for read_file: ${parsed.error}`);
         }
-
         const validPath = await validatePath(parsed.data.path);
+        if (parsed.data.head && parsed.data.tail) {
+          throw new Error("Cannot specify both head and tail parameters simultaneously");
+        }
+        if (parsed.data.tail) {
+          const tailContent = await tailFile(validPath, parsed.data.tail);
+          return {
+            content: [{ type: "text", text: tailContent }],
+          };
+        }
+        if (parsed.data.head) {
+          const headContent = await headFile(validPath, parsed.data.head);
+          return {
+            content: [{ type: "text", text: headContent }],
+          };
+        }
         const content = await fs.readFile(validPath, "utf-8");
         return {
           content: [{ type: "text", text: content }],
         };
       }
-
+      case "read_multiple_files": {
+        const parsed = ReadMultipleFilesArgsSchema.safeParse(args);
+        if (!parsed.success) {
+          throw new Error(`Invalid arguments for read_multiple_files: ${parsed.error}`);
+        }
+        const results = await Promise.all(
+          parsed.data.paths.map(async (filePath: string) => {
+            try {
+              const validPath = await validatePath(filePath);
+              const content = await fs.readFile(validPath, "utf-8");
+              return `${filePath}:\n${content}\n`;
+            } catch (error) {
+              const errorMessage = error instanceof Error ? error.message : String(error);
+              return `${filePath}: Error - ${errorMessage}`;
+            }
+          }),
+        );
+        return {
+          content: [{ type: "text", text: results.join("\n---\n") }],
+        };
+      }
+      case "write_file": {
+        const parsed = WriteFileArgsSchema.safeParse(args);
+        if (!parsed.success) {
+          throw new Error(`Invalid arguments for write_file: ${parsed.error}`);
+        }
+        const validPath = await validatePath(parsed.data.path);
+        await fs.writeFile(validPath, parsed.data.content, "utf-8");
+        return {
+          content: [{ type: "text", text: `Successfully wrote to ${parsed.data.path}` }],
+        };
+      }
+      case "edit_file": {
+        const parsed = EditFileArgsSchema.safeParse(args);
+        if (!parsed.success) {
+          throw new Error(`Invalid arguments for edit_file: ${parsed.error}`);
+        }
+        const validPath = await validatePath(parsed.data.path);
+        const result = await applyFileEdits(validPath, parsed.data.edits, parsed.data.dryRun);
+        return {
+          content: [{ type: "text", text: result }],
+        };
+      }
+      case "create_directory": {
+        const parsed = CreateDirectoryArgsSchema.safeParse(args);
+        if (!parsed.success) {
+          throw new Error(`Invalid arguments for create_directory: ${parsed.error}`);
+        }
+        const validPath = await validatePath(parsed.data.path);
+        await fs.mkdir(validPath, { recursive: true });
+        return {
+          content: [{ type: "text", text: `Successfully created directory ${parsed.data.path}` }],
+        };
+      }
       case "list_directory": {
         const parsed = ListDirectoryArgsSchema.safeParse(args);
         if (!parsed.success) {
           throw new Error(`Invalid arguments for list_directory: ${parsed.error}`);
         }
-
         const validPath = await validatePath(parsed.data.path);
         const entries = await fs.readdir(validPath, { withFileTypes: true });
         const formatted = entries
           .map((entry) => `${entry.isDirectory() ? "[DIR]" : "[FILE]"} ${entry.name}`)
           .join("\n");
-
         return {
           content: [{ type: "text", text: formatted }],
         };
       }
-      
+      case "list_directory_with_sizes": {
+        const parsed = ListDirectoryWithSizesArgsSchema.safeParse(args);
+        if (!parsed.success) {
+          throw new Error(`Invalid arguments for list_directory_with_sizes: ${parsed.error}`);
+        }
+        const validPath = await validatePath(parsed.data.path);
+        const entries = await fs.readdir(validPath, { withFileTypes: true });
+        const detailedEntries = await Promise.all(
+          entries.map(async (entry) => {
+            const entryPath = path.join(validPath, entry.name);
+            try {
+              const stats = await fs.stat(entryPath);
+              return {
+                name: entry.name,
+                isDirectory: entry.isDirectory(),
+                size: stats.size,
+                mtime: stats.mtime
+              };
+            } catch (error) {
+              return {
+                name: entry.name,
+                isDirectory: entry.isDirectory(),
+                size: 0,
+                mtime: new Date(0)
+              };
+            }
+          })
+        );
+        const sortedEntries = [...detailedEntries].sort((a, b) => {
+          if (parsed.data.sortBy === 'size') {
+            return b.size - a.size;
+          }
+          return a.name.localeCompare(b.name);
+        });
+        const formattedEntries = sortedEntries.map(entry =>
+          `${entry.isDirectory ? "[DIR]" : "[FILE]"} ${entry.name.padEnd(30)} ${
+            entry.isDirectory ? "" : formatSize(entry.size).padStart(10)
+          }`
+        );
+        const totalFiles = detailedEntries.filter(e => !e.isDirectory).length;
+        const totalDirs = detailedEntries.filter(e => e.isDirectory).length;
+        const totalSize = detailedEntries.reduce((sum, entry) => sum + (entry.isDirectory ? 0 : entry.size), 0);
+        const summary = [
+          "",
+          `Total: ${totalFiles} files, ${totalDirs} directories`,
+          `Combined size: ${formatSize(totalSize)}`
+        ];
+        return {
+          content: [{
+            type: "text",
+            text: [...formattedEntries, ...summary].join("\n")
+          }],
+        };
+      }
+      case "directory_tree": {
+        const parsed = DirectoryTreeArgsSchema.safeParse(args);
+        if (!parsed.success) {
+          throw new Error(`Invalid arguments for directory_tree: ${parsed.error}`);
+        }
+        interface TreeEntry {
+            name: string;
+            type: 'file' | 'directory';
+            children?: TreeEntry[];
+        }
+        async function buildTree(currentPath: string): Promise<TreeEntry[]> {
+            const validPath = await validatePath(currentPath);
+            const entries = await fs.readdir(validPath, {withFileTypes: true});
+            const result: TreeEntry[] = [];
+            for (const entry of entries) {
+                const entryData: TreeEntry = {
+                    name: entry.name,
+                    type: entry.isDirectory() ? 'directory' : 'file'
+                };
+                if (entry.isDirectory()) {
+                    const subPath = path.join(currentPath, entry.name);
+                    entryData.children = await buildTree(subPath);
+                }
+                result.push(entryData);
+            }
+            return result;
+        }
+        const treeData = await buildTree(parsed.data.path);
+        return {
+            content: [{
+                type: "text",
+                text: JSON.stringify(treeData, null, 2)
+            }],
+        };
+      }
+      case "move_file": {
+        const parsed = MoveFileArgsSchema.safeParse(args);
+        if (!parsed.success) {
+          throw new Error(`Invalid arguments for move_file: ${parsed.error}`);
+        }
+        const validSourcePath = await validatePath(parsed.data.source);
+        const validDestPath = await validatePath(parsed.data.destination);
+        await fs.rename(validSourcePath, validDestPath);
+        return {
+          content: [{ type: "text", text: `Successfully moved ${parsed.data.source} to ${parsed.data.destination}` }],
+        };
+      }
+      case "search_files": {
+        const parsed = SearchFilesArgsSchema.safeParse(args);
+        if (!parsed.success) {
+          throw new Error(`Invalid arguments for search_files: ${parsed.error}`);
+        }
+        const validPath = await validatePath(parsed.data.path);
+        const results = await searchFiles(validPath, parsed.data.pattern, parsed.data.excludePatterns);
+        return {
+          content: [{ type: "text", text: results.length > 0 ? results.join("\n") : "No matches found" }],
+        };
+      }
+      case "get_file_info": {
+        const parsed = GetFileInfoArgsSchema.safeParse(args);
+        if (!parsed.success) {
+          throw new Error(`Invalid arguments for get_file_info: ${parsed.error}`);
+        }
+        const validPath = await validatePath(parsed.data.path);
+        const info = await getFileStats(validPath);
+        return {
+          content: [{ type: "text", text: Object.entries(info)
+            .map(([key, value]) => `${key}: ${value}`)
+            .join("\n") }],
+        };
+      }
       case "list_allowed_directories": {
         return {
           content: [{
@@ -1292,9 +1480,8 @@ async function handleToolCall(params: any) {
           }],
         };
       }
-      
       default:
-        throw new Error(`Tool ${name} not implemented`);
+        throw new Error(`Unknown tool: ${name}`);
     }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
