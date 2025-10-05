@@ -1,0 +1,85 @@
+# MCP Filesystem Server Configuration Example (YAML)
+# Copy this file to config.yaml and customize for your environment
+
+# Server metadata
+server:
+  name: secure-filesystem-server
+  version: 0.2.0
+
+# Transport configuration
+transport:
+  # Transport mode: stdio, sse, or http
+  mode: stdio
+  # Port for HTTP/SSE modes
+  port: 3000
+  # Host binding for HTTP/SSE modes (use 0.0.0.0 for external access)
+  host: localhost
+
+# Filesystem access configuration
+filesystem:
+  # List of allowed directories (required)
+  # Paths can use ~ for home directory
+  allowedDirectories:
+    - ~/Documents
+    - ~/Projects
+    - /var/www
+  # Optional: Set working directory for relative path resolution
+  # If not specified, uses current working directory
+  workingDirectory: ~/Projects
+
+# File content caching (improves performance for repeated reads)
+cache:
+  enabled: false
+  # Cache TTL in milliseconds (default: 60000 = 60 seconds)
+  ttl: 60000
+  # Maximum cache size in bytes (default: 104857600 = 100MB)
+  maxSize: 104857600
+
+# Rate limiting (protects against request flooding)
+rateLimit:
+  enabled: false
+  # General requests per minute per client
+  requestsPerMinute: 100
+  # Search operation requests per minute
+  searchRequestsPerMinute: 10
+  # Directory tree operation requests per minute
+  treeRequestsPerMinute: 5
+
+# Performance and safety limits
+limits:
+  # Maximum file size for read operations in bytes (100MB)
+  maxFileSize: 104857600
+  # Maximum number of search results to return
+  maxSearchResults: 1000
+  # Maximum depth for directory tree operations
+  maxTreeDepth: 10
+  # Search operation timeout in milliseconds
+  searchTimeout: 30000
+
+# Logging configuration
+logging:
+  # Log level: debug, info, warn, error
+  level: info
+  # Log format: json or pretty
+  format: pretty
+  # Optional: Log to file instead of stderr
+  # destination: /var/log/mcp-filesystem-server.log
+
+# Security configuration
+security:
+  # Optional: Authentication token for HTTP/SSE modes
+  # authToken: your-secret-token-here
+  # Enable CORS for HTTP/SSE modes
+  corsEnabled: true
+  # CORS origin setting (true = all origins, or specify domain(s))
+  corsOrigin: true
+  # Examples:
+  # corsOrigin: "https://example.com"
+  # corsOrigin: ["https://example.com", "https://app.example.com"]
+
+# Monitoring configuration
+monitoring:
+  # Enable Prometheus metrics endpoint
+  metricsEnabled: false
+  # Metrics endpoint path
+  metricsEndpoint: /metrics

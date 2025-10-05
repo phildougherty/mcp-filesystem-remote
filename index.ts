@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -12,7 +11,7 @@ import path from "path";
 import os from 'os';
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
-import { diffLines, createTwoFilesPatch } from 'diff';
+import { createTwoFilesPatch } from 'diff';
 import { minimatch } from 'minimatch';
 import express from 'express';
 import cors from 'cors';
@@ -47,10 +46,18 @@ while (i < allArgs.length) {
   const arg = allArgs[i];
   console.error(`DEBUG: Processing arg[${i}]: ${arg}`);
   
+  if (!arg) {
+    i += 1;
+    continue;
+  }
+
   if (arg === '--transport') {
     if (i + 1 < allArgs.length) {
-      transportMode = allArgs[i + 1];
-      console.error(`DEBUG: Set transport to: ${transportMode}`);
+      const nextArg = allArgs[i + 1];
+      if (nextArg) {
+        transportMode = nextArg;
+        console.error(`DEBUG: Set transport to: ${transportMode}`);
+      }
       i += 2; // Skip both --transport and its value
     } else {
       console.error("Error: --transport requires a value");
@@ -58,12 +65,15 @@ while (i < allArgs.length) {
     }
   } else if (arg === '--port') {
     if (i + 1 < allArgs.length) {
-      port = parseInt(allArgs[i + 1], 10);
-      if (isNaN(port)) {
-        console.error("Invalid port number");
-        process.exit(1);
+      const nextArg = allArgs[i + 1];
+      if (nextArg) {
+        port = parseInt(nextArg, 10);
+        if (isNaN(port)) {
+          console.error("Invalid port number");
+          process.exit(1);
+        }
+        console.error(`DEBUG: Set port to: ${port}`);
       }
-      console.error(`DEBUG: Set port to: ${port}`);
       i += 2; // Skip both --port and its value
     } else {
       console.error("Error: --port requires a value");
@@ -71,8 +81,11 @@ while (i < allArgs.length) {
     }
   } else if (arg === '--host') {
     if (i + 1 < allArgs.length) {
-      host = allArgs[i + 1];
-      console.error(`DEBUG: Set host to: ${host}`);
+      const nextArg = allArgs[i + 1];
+      if (nextArg) {
+        host = nextArg;
+        console.error(`DEBUG: Set host to: ${host}`);
+      }
       i += 2; // Skip both --host and its value
     } else {
       console.error("Error: --host requires a value");
@@ -369,14 +382,16 @@ async function applyFileEdits(
       // Compare lines with normalized whitespace
       const isMatch = oldLines.every((oldLine, j) => {
         const contentLine = potentialMatch[j];
+        if (!contentLine) {return false;}
         return oldLine.trim() === contentLine.trim();
       });
-      
+
       if (isMatch) {
         // Preserve original indentation of first line
-        const originalIndent = contentLines[i].match(/^\s*/)?.[0] || '';
+        const firstLine = contentLines[i];
+        const originalIndent = firstLine?.match(/^\s*/)?.[0] || '';
         const newLines = normalizedNew.split('\n').map((line, j) => {
-          if (j === 0) return originalIndent + line.trimStart();
+          if (j === 0) {return originalIndent + line.trimStart();}
           // For subsequent lines, try to preserve relative indentation
           const oldIndent = oldLines[j]?.match(/^\s*/)?.[0] || '';
           const newIndent = line.match(/^\s*/)?.[0] || '';
@@ -419,9 +434,9 @@ async function applyFileEdits(
 // Helper functions
 function formatSize(bytes: number): string {
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  if (bytes === 0) return '0 B';
+  if (bytes === 0) {return '0 B';}
   const i = Math.floor(Math.log(bytes) / Math.log(1024));
-  if (i === 0) return `${bytes} ${units[i]}`;
+  if (i === 0) {return `${bytes} ${units[i]}`;}
   return `${(bytes / Math.pow(1024, i)).toFixed(2)} ${units[i]}`;
 }
 
@@ -431,14 +446,14 @@ async function tailFile(filePath: string, numLines: number): Promise<string> {
   const stats = await fs.stat(filePath);
   const fileSize = stats.size;
   
-  if (fileSize === 0) return '';
+  if (fileSize === 0) {return '';}
   
   // Open file for reading
   const fileHandle = await fs.open(filePath, 'r');
   try {
     const lines: string[] = [];
     let position = fileSize;
-    let chunk = Buffer.alloc(CHUNK_SIZE);
+    const chunk = Buffer.alloc(CHUNK_SIZE);
     let linesFound = 0;
     let remainingText = '';
     
@@ -448,7 +463,7 @@ async function tailFile(filePath: string, numLines: number): Promise<string> {
       position -= size;
       
       const { bytesRead } = await fileHandle.read(chunk, 0, size, position);
-      if (!bytesRead) break;
+      if (!bytesRead) {break;}
       
       // Get the chunk as a string and prepend any remaining text from previous iteration
       const readData = chunk.slice(0, bytesRead).toString('utf-8');
@@ -460,14 +475,20 @@ async function tailFile(filePath: string, numLines: number): Promise<string> {
       // If this isn't the end of the file, the first line is likely incomplete
       // Save it to prepend to the next chunk
       if (position > 0) {
-        remainingText = chunkLines[0];
+        const firstLine = chunkLines[0];
+        if (firstLine !== undefined) {
+          remainingText = firstLine;
+        }
         chunkLines.shift(); // Remove the first (incomplete) line
       }
-      
+
       // Add lines to our result (up to the number we need)
       for (let i = chunkLines.length - 1; i >= 0 && linesFound < numLines; i--) {
-        lines.unshift(chunkLines[i]);
-        linesFound++;
+        const line = chunkLines[i];
+        if (line !== undefined) {
+          lines.unshift(line);
+          linesFound++;
+        }
       }
     }
     
@@ -489,7 +510,7 @@ async function headFile(filePath: string, numLines: number): Promise<string> {
     // Read chunks and count lines until we have enough or reach EOF
     while (lines.length < numLines) {
       const result = await fileHandle.read(chunk, 0, chunk.length, bytesRead);
-      if (result.bytesRead === 0) break; // End of file
+      if (result.bytesRead === 0) {break;} // End of file
       
       bytesRead += result.bytesRead;
       buffer += chunk.slice(0, result.bytesRead).toString('utf-8');
@@ -501,7 +522,7 @@ async function headFile(filePath: string, numLines: number): Promise<string> {
         
         for (const line of completeLines) {
           lines.push(line);
-          if (lines.length >= numLines) break;
+          if (lines.length >= numLines) {break;}
         }
       }
     }
@@ -948,9 +969,9 @@ async function runServer() {
     const connections = new Map<string, any>();
     
     // Health check endpoint
-    app.get('/health', (req, res) => {
-      res.json({ 
-        status: 'healthy', 
+    app.get('/health', (_req, res) => {
+      res.json({
+        status: 'healthy',
         server: 'secure-filesystem-server',
         version: '0.2.0',
         allowedDirectories: allowedDirectories,
@@ -1056,10 +1077,17 @@ async function runServer() {
             ]
           };
         }
-        // Handle tools/call request
+        // Handle tools/call request - delegate to server's CallToolRequestHandler
         else if (request.method === 'tools/call') {
-          console.error('Handling tools/call request...');
-          response = await handleToolCall(request.params);
+          console.error('Handling tools/call request - delegating to server handler');
+          // Call the registered server handler directly
+          const handlers = (server as any)._requestHandlers;
+          const handler = handlers?.get('tools/call');
+          if (handler) {
+            response = await handler({ method: 'tools/call', params: request.params });
+          } else {
+            throw new Error('tools/call handler not registered');
+          }
         }
         else {
           console.error('Unknown method:', request.method);
@@ -1072,7 +1100,7 @@ async function runServer() {
         }
         
         // Build response based on method and response type
-        let fullResponse: any = {
+        const fullResponse: any = {
           jsonrpc: "2.0",
           id: request.id
         };
@@ -1190,12 +1218,19 @@ async function runServer() {
           } else if (request.method === 'tools/list') {
             response = { tools: [] }; // Simplified for /message endpoint
           } else if (request.method === 'tools/call') {
-            response = await handleToolCall(request.params);
+            // Delegate to server's CallToolRequestHandler
+            const handlers = (server as any)._requestHandlers;
+            const handler = handlers?.get('tools/call');
+            if (handler) {
+              response = await handler({ method: 'tools/call', params: request.params });
+            } else {
+              throw new Error('tools/call handler not registered');
+            }
           } else {
             response = { error: { code: -32601, message: `Method not found: ${request.method}` } };
           }
           
-          let fullResponse: any = {
+          const fullResponse: any = {
             jsonrpc: "2.0",
             id: request.id
           };
@@ -1248,249 +1283,6 @@ async function runServer() {
   }
 }
 
-// Helper function to handle tool calls
-async function handleToolCall(params: any) {
-  try {
-    const { name, arguments: args } = params;
-    switch (name) {
-      case "read_file": {
-        const parsed = ReadFileArgsSchema.safeParse(args);
-        if (!parsed.success) {
-          throw new Error(`Invalid arguments for read_file: ${parsed.error}`);
-        }
-        const validPath = await validatePath(parsed.data.path);
-        if (parsed.data.head && parsed.data.tail) {
-          throw new Error("Cannot specify both head and tail parameters simultaneously");
-        }
-        if (parsed.data.tail) {
-          const tailContent = await tailFile(validPath, parsed.data.tail);
-          return {
-            content: [{ type: "text", text: tailContent }],
-          };
-        }
-        if (parsed.data.head) {
-          const headContent = await headFile(validPath, parsed.data.head);
-          return {
-            content: [{ type: "text", text: headContent }],
-          };
-        }
-        const content = await fs.readFile(validPath, "utf-8");
-        return {
-          content: [{ type: "text", text: content }],
-        };
-      }
-      case "read_multiple_files": {
-        const parsed = ReadMultipleFilesArgsSchema.safeParse(args);
-        if (!parsed.success) {
-          throw new Error(`Invalid arguments for read_multiple_files: ${parsed.error}`);
-        }
-        const results = await Promise.all(
-          parsed.data.paths.map(async (filePath: string) => {
-            try {
-              const validPath = await validatePath(filePath);
-              const content = await fs.readFile(validPath, "utf-8");
-              return `${filePath}:\n${content}\n`;
-            } catch (error) {
-              const errorMessage = error instanceof Error ? error.message : String(error);
-              return `${filePath}: Error - ${errorMessage}`;
-            }
-          }),
-        );
-        return {
-          content: [{ type: "text", text: results.join("\n---\n") }],
-        };
-      }
-      case "write_file": {
-        const parsed = WriteFileArgsSchema.safeParse(args);
-        if (!parsed.success) {
-          throw new Error(`Invalid arguments for write_file: ${parsed.error}`);
-        }
-        const validPath = await validatePath(parsed.data.path);
-        await fs.writeFile(validPath, parsed.data.content, "utf-8");
-        return {
-          content: [{ type: "text", text: `Successfully wrote to ${parsed.data.path}` }],
-        };
-      }
-      case "edit_file": {
-        const parsed = EditFileArgsSchema.safeParse(args);
-        if (!parsed.success) {
-          throw new Error(`Invalid arguments for edit_file: ${parsed.error}`);
-        }
-        const validPath = await validatePath(parsed.data.path);
-        const result = await applyFileEdits(validPath, parsed.data.edits, parsed.data.dryRun);
-        return {
-          content: [{ type: "text", text: result }],
-        };
-      }
-      case "create_directory": {
-        const parsed = CreateDirectoryArgsSchema.safeParse(args);
-        if (!parsed.success) {
-          throw new Error(`Invalid arguments for create_directory: ${parsed.error}`);
-        }
-        const validPath = await validatePath(parsed.data.path);
-        await fs.mkdir(validPath, { recursive: true });
-        return {
-          content: [{ type: "text", text: `Successfully created directory ${parsed.data.path}` }],
-        };
-      }
-      case "list_directory": {
-        const parsed = ListDirectoryArgsSchema.safeParse(args);
-        if (!parsed.success) {
-          throw new Error(`Invalid arguments for list_directory: ${parsed.error}`);
-        }
-        const validPath = await validatePath(parsed.data.path);
-        const entries = await fs.readdir(validPath, { withFileTypes: true });
-        const formatted = entries
-          .map((entry) => `${entry.isDirectory() ? "[DIR]" : "[FILE]"} ${entry.name}`)
-          .join("\n");
-        return {
-          content: [{ type: "text", text: formatted }],
-        };
-      }
-      case "list_directory_with_sizes": {
-        const parsed = ListDirectoryWithSizesArgsSchema.safeParse(args);
-        if (!parsed.success) {
-          throw new Error(`Invalid arguments for list_directory_with_sizes: ${parsed.error}`);
-        }
-        const validPath = await validatePath(parsed.data.path);
-        const entries = await fs.readdir(validPath, { withFileTypes: true });
-        const detailedEntries = await Promise.all(
-          entries.map(async (entry) => {
-            const entryPath = path.join(validPath, entry.name);
-            try {
-              const stats = await fs.stat(entryPath);
-              return {
-                name: entry.name,
-                isDirectory: entry.isDirectory(),
-                size: stats.size,
-                mtime: stats.mtime
-              };
-            } catch (error) {
-              return {
-                name: entry.name,
-                isDirectory: entry.isDirectory(),
-                size: 0,
-                mtime: new Date(0)
-              };
-            }
-          })
-        );
-        const sortedEntries = [...detailedEntries].sort((a, b) => {
-          if (parsed.data.sortBy === 'size') {
-            return b.size - a.size;
-          }
-          return a.name.localeCompare(b.name);
-        });
-        const formattedEntries = sortedEntries.map(entry =>
-          `${entry.isDirectory ? "[DIR]" : "[FILE]"} ${entry.name.padEnd(30)} ${
-            entry.isDirectory ? "" : formatSize(entry.size).padStart(10)
-          }`
-        );
-        const totalFiles = detailedEntries.filter(e => !e.isDirectory).length;
-        const totalDirs = detailedEntries.filter(e => e.isDirectory).length;
-        const totalSize = detailedEntries.reduce((sum, entry) => sum + (entry.isDirectory ? 0 : entry.size), 0);
-        const summary = [
-          "",
-          `Total: ${totalFiles} files, ${totalDirs} directories`,
-          `Combined size: ${formatSize(totalSize)}`
-        ];
-        return {
-          content: [{
-            type: "text",
-            text: [...formattedEntries, ...summary].join("\n")
-          }],
-        };
-      }
-      case "directory_tree": {
-        const parsed = DirectoryTreeArgsSchema.safeParse(args);
-        if (!parsed.success) {
-          throw new Error(`Invalid arguments for directory_tree: ${parsed.error}`);
-        }
-        interface TreeEntry {
-            name: string;
-            type: 'file' | 'directory';
-            children?: TreeEntry[];
-        }
-        async function buildTree(currentPath: string): Promise<TreeEntry[]> {
-            const validPath = await validatePath(currentPath);
-            const entries = await fs.readdir(validPath, {withFileTypes: true});
-            const result: TreeEntry[] = [];
-            for (const entry of entries) {
-                const entryData: TreeEntry = {
-                    name: entry.name,
-                    type: entry.isDirectory() ? 'directory' : 'file'
-                };
-                if (entry.isDirectory()) {
-                    const subPath = path.join(currentPath, entry.name);
-                    entryData.children = await buildTree(subPath);
-                }
-                result.push(entryData);
-            }
-            return result;
-        }
-        const treeData = await buildTree(parsed.data.path);
-        return {
-            content: [{
-                type: "text",
-                text: JSON.stringify(treeData, null, 2)
-            }],
-        };
-      }
-      case "move_file": {
-        const parsed = MoveFileArgsSchema.safeParse(args);
-        if (!parsed.success) {
-          throw new Error(`Invalid arguments for move_file: ${parsed.error}`);
-        }
-        const validSourcePath = await validatePath(parsed.data.source);
-        const validDestPath = await validatePath(parsed.data.destination);
-        await fs.rename(validSourcePath, validDestPath);
-        return {
-          content: [{ type: "text", text: `Successfully moved ${parsed.data.source} to ${parsed.data.destination}` }],
-        };
-      }
-      case "search_files": {
-        const parsed = SearchFilesArgsSchema.safeParse(args);
-        if (!parsed.success) {
-          throw new Error(`Invalid arguments for search_files: ${parsed.error}`);
-        }
-        const validPath = await validatePath(parsed.data.path);
-        const results = await searchFiles(validPath, parsed.data.pattern, parsed.data.excludePatterns);
-        return {
-          content: [{ type: "text", text: results.length > 0 ? results.join("\n") : "No matches found" }],
-        };
-      }
-      case "get_file_info": {
-        const parsed = GetFileInfoArgsSchema.safeParse(args);
-        if (!parsed.success) {
-          throw new Error(`Invalid arguments for get_file_info: ${parsed.error}`);
-        }
-        const validPath = await validatePath(parsed.data.path);
-        const info = await getFileStats(validPath);
-        return {
-          content: [{ type: "text", text: Object.entries(info)
-            .map(([key, value]) => `${key}: ${value}`)
-            .join("\n") }],
-        };
-      }
-      case "list_allowed_directories": {
-        return {
-          content: [{
-            type: "text",
-            text: `Allowed directories:\n${allowedDirectories.join('\n')}`
-          }],
-        };
-      }
-      default:
-        throw new Error(`Unknown tool: ${name}`);
-    }
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    return {
-      content: [{ type: "text", text: `Error: ${errorMessage}` }],
-      isError: true,
-    };
-  }
-}
 
 runServer().catch((error) => {
   console.error("Fatal error running server:", error);

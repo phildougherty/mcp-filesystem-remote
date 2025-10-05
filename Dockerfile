@@ -1,7 +1,6 @@
 FROM node:22.12-alpine AS builder
 WORKDIR /app
-COPY src/filesystem /app
-COPY tsconfig.json /tsconfig.json
+COPY . /app
 RUN --mount=type=cache,target=/root/.npm npm install
 RUN --mount=type=cache,target=/root/.npm npm run build
 

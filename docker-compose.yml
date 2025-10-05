@@ -1,0 +1,112 @@
+version: '3.8'
+
+services:
+  # Main MCP filesystem server with HTTP transport
+  mcp-filesystem:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mcp-filesystem-server
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      # Mount directories to expose
+      - ./data:/data
+      - ./configs:/configs:ro  # Read-only mount for configs
+    environment:
+      - NODE_ENV=production
+      - NODE_OPTIONS=--max-old-space-size=512
+    command: [
+      "--transport", "http",
+      "--port", "3000",
+      "--host", "0.0.0.0",
+      "--log-level", "info",
+      "--log-format", "json",
+      "/data",
+      "/configs"
+    ]
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - mcp-network
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+  # Alternative: SSE transport instance
+  mcp-filesystem-sse:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mcp-filesystem-sse
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    volumes:
+      - ./data:/data
+    environment:
+      - NODE_ENV=production
+      - NODE_OPTIONS=--max-old-space-size=512
+    command: [
+      "--transport", "sse",
+      "--port", "3000",
+      "--host", "0.0.0.0",
+      "--log-level", "info",
+      "--log-format", "json",
+      "/data"
+    ]
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - mcp-network
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    profiles:
+      - sse  # Optional service, only started with --profile sse
+
+  # Nginx reverse proxy (optional)
+  nginx:
+    image: nginx:alpine
+    container_name: mcp-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro  # SSL certificates
+    depends_on:
+      - mcp-filesystem
+    networks:
+      - mcp-network
+    profiles:
+      - nginx  # Optional service
+
+networks:
+  mcp-network:
+    driver: bridge
+
+volumes:
+  # Define named volumes if needed
+  mcp-data:
+    driver: local

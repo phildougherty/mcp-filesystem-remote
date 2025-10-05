@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "description": "MCP Filesystem Server Configuration Example (JSON)",
+  "server": {
+    "name": "secure-filesystem-server",
+    "version": "0.2.0"
+  },
+  "transport": {
+    "mode": "stdio",
+    "port": 3000,
+    "host": "localhost"
+  },
+  "filesystem": {
+    "allowedDirectories": ["~/Documents", "~/Projects", "/var/www"],
+    "workingDirectory": "~/Projects"
+  },
+  "cache": {
+    "enabled": false,
+    "ttl": 60000,
+    "maxSize": 104857600
+  },
+  "rateLimit": {
+    "enabled": false,
+    "requestsPerMinute": 100,
+    "searchRequestsPerMinute": 10,
+    "treeRequestsPerMinute": 5
+  },
+  "limits": {
+    "maxFileSize": 104857600,
+    "maxSearchResults": 1000,
+    "maxTreeDepth": 10,
+    "searchTimeout": 30000
+  },
+  "logging": {
+    "level": "info",
+    "format": "pretty"
+  },
+  "security": {
+    "corsEnabled": true,
+    "corsOrigin": true
+  },
+  "monitoring": {
+    "metricsEnabled": false,
+    "metricsEndpoint": "/metrics"
+  }
+}
